@@ -84,7 +84,6 @@ async def analyze_competencies_handler(callback: types.CallbackQuery, state: FSM
 @dp.callback_query(lambda c: c.data == "get_recommendations")
 async def get_recommendations_handler(callback: types.CallbackQuery, state: FSMContext):
     """Обработчик кнопки 'Рекомендации'"""
-    # Проверяем, есть ли файл с отчетом компетенций
     if not os.path.exists('REPORT.txt'):
         await callback.message.answer(
             "❌ Сначала выполните анализ компетенций!\n\n"
@@ -95,7 +94,39 @@ async def get_recommendations_handler(callback: types.CallbackQuery, state: FSMC
         )
         await callback.answer()
         return
-    
+
+    user_id = callback.from_user.id
+    user_folder = f"temp_files/{user_id}"
+    trans_file_path = f"{user_folder}/trans.docx"
+    if os.path.exists(trans_file_path):
+        await callback.message.answer("✅ Начинаю анализ...")
+        try:
+            analysis_result = meeting_analyzer.analyze_meeting_with_file(trans_file_path)
+            if analysis_result.startswith("❌"):
+                await callback.message.answer(analysis_result)
+                os.remove(trans_file_path)
+                await state.clear()
+                return
+            recommendations_filename = f"detailed_recommendations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            with open(recommendations_filename, 'w', encoding='utf-8') as f:
+                f.write(analysis_result)
+            with open(recommendations_filename, 'rb') as f:
+                await callback.message.answer_document(
+                    types.BufferedInputFile(f.read(), filename=recommendations_filename),
+                    caption="💡 Детальные рекомендации по развитию компетенций\n\n📊 Анализ основан на:\n• Тексте встречи\n• Отчете по компетенциям"
+                )
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🏠 Меню", callback_data="back_to_main")]
+            ])
+            await callback.message.answer("✅ Анализ завершен! Нажмите кнопку ниже для возврата в главное меню:", reply_markup=keyboard)
+            os.remove(trans_file_path)
+            await state.clear()
+        except Exception as e:
+            await callback.message.answer(f"❌ Ошибка при анализе: {str(e)}")
+            os.remove(trans_file_path)
+            await state.clear()
+        return
+
     await state.set_state(UserStates.waiting_for_trans_file)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_operation")]
