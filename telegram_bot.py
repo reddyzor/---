@@ -271,11 +271,14 @@ async def analyze_user_files(message: types.Message, user_id: int):
                 caption="📊 Полный отчет по анализу компетенций"
             )
         
-        # Отправляем краткое резюме с кнопкой меню
+        # Сначала отправляем краткое резюме без кнопки
+        await message.answer(f"📋 {summary}")
+
+        # Затем отдельное сообщение с кнопкой возврата в меню
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🏠 Меню", callback_data="back_to_main")]
         ])
-        await message.answer(f"📋 {summary}", reply_markup=keyboard)
+        await message.answer("Вы можете вернуться в меню:", reply_markup=keyboard)
         
         # НЕ очищаем temp_files после анализа!
         # cleanup_user_files(user_id)  # <-- УБРАНО
