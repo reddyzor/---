@@ -62,6 +62,12 @@ async def cmd_start(message: types.Message):
 async def analyze_competencies_handler(callback: types.CallbackQuery, state: FSMContext):
     """Обработчик кнопки 'Анализ компетенций'"""
     await state.set_state(UserStates.waiting_for_files)
+    user_id = callback.from_user.id
+    user_folder = f"temp_files/{user_id}"
+    if os.path.exists(user_folder):
+        import shutil
+        shutil.rmtree(user_folder)
+    os.makedirs(user_folder, exist_ok=True)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_operation")]
     ])
@@ -190,14 +196,9 @@ async def handle_files_for_analysis(message: types.Message, state: FSMContext):
     """Обработчик файлов для анализа компетенций"""
     user_id = message.from_user.id
     
-    # ОЧИСТКА temp_files только при новом анализе компетенций
+    # ОЧИСТКА temp_files только при новом анализе компетенций (перенесено)
     user_folder = f"temp_files/{user_id}"
     if not os.path.exists(user_folder):
-        os.makedirs(user_folder, exist_ok=True)
-    elif os.listdir(user_folder):
-        # Если папка не пуста — очистить
-        import shutil
-        shutil.rmtree(user_folder)
         os.makedirs(user_folder, exist_ok=True)
 
     if not message.document:
@@ -205,18 +206,24 @@ async def handle_files_for_analysis(message: types.Message, state: FSMContext):
         return
     
     file_name = message.document.file_name
+    # Сохраняем docx как trans.docx, xlsx как triggers.xlsx
+    if file_name.lower().endswith('.docx'):
+        save_name = 'trans.docx'
+    elif file_name.lower().endswith('.xlsx'):
+        save_name = 'triggers.xlsx'
+    else:
+        save_name = file_name  # fallback
+
+    file_path = f"{user_folder}/{save_name}"
     file_info = await bot.get_file(message.document.file_id)
     downloaded_file = await bot.download_file(file_info.file_path)
-    
-    # Сохраняем файл
-    file_path = f"{user_folder}/{file_name}"
     with open(file_path, 'wb') as f:
         f.write(downloaded_file.read())
-    
+
     if user_id not in user_files:
         user_files[user_id] = {}
-    
-    user_files[user_id][file_name] = file_path
+
+    user_files[user_id][save_name] = file_path
     
     await message.answer(f"✅ Файл {file_name} загружен!")
     
