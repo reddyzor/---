@@ -190,7 +190,10 @@ class CompetencyAnalyzer:
                     for example in ind_data['negative']['examples']:
                         report += f"      • \"{example['found'][:200]}...\"\n"
                         report += f"        Похоже на: \"{example['original'][:100]}...\"\n"
-                        report += f"        Балл: -{example['score']:.1f}\n\n"
+                        report += f"        Балл: -{example['score']:.1f}\n"
+                        if 'advice' in example:
+                            report += f"        Совет: {example['advice']}\n"
+                        report += "\n"
                 
                 # Рекомендации по курсам
                 if ind_data['courses']:

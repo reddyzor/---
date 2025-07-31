@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 import os
 from docx import Document
+import pandas as pd
 
 
 class MeetingAnalyzer:
@@ -45,6 +46,47 @@ class MeetingAnalyzer:
         for para in doc.paragraphs:
             full_text.append(para.text)
         return '\n'.join(full_text)
+
+    def _load_triggers_courses(self, triggers_file_path):
+        """Загружает курсы из файла триггеров"""
+        try:
+            df = pd.read_excel(triggers_file_path)
+            df = df.fillna('')
+            
+            courses_dict = {}
+            for _, row in df.iterrows():
+                comp = row.get('компетенция', '').strip()
+                indicator = row.get('Поведенческие проявления (индикаторы)', '').strip()
+                courses = row.get('курсы', '').strip()
+                
+                if comp and courses:
+                    key = f"{comp} - {indicator}" if indicator else comp
+                    course_list = [c.strip() for c in courses.split(',') if c.strip()]
+                    if course_list:
+                        courses_dict[key] = course_list
+            
+            return courses_dict
+        except Exception as e:
+            print(f"Ошибка загрузки курсов из триггеров: {e}")
+            return {}
+
+    def _extract_competencies_from_report(self, report_text):
+        """Извлекает компетенции с низкими баллами из отчета"""
+        low_score_competencies = []
+        lines = report_text.split('\n')
+        
+        for line in lines:
+            # Ищем строки с компетенциями (с эмодзи или без)
+            if ('🔴' in line or '🟡' in line or '🟢' in line) and '**' in line:
+                # Извлекаем название компетенции
+                comp_name = line.split('**')[1].split('**')[0]
+                low_score_competencies.append(comp_name)
+            # Также ищем строки с "🏆" (заголовки компетенций)
+            elif '🏆' in line and ' - средний балл' in line:
+                comp_name = line.split('🏆')[1].split(' - средний балл')[0].strip()
+                low_score_competencies.append(comp_name)
+        
+        return low_score_competencies
 
     def analyze_meeting(self):
         if not self.is_token_valid() and not self.get_access_token():
@@ -155,6 +197,29 @@ class MeetingAnalyzer:
         except Exception as e:
             return f"❌ Ошибка чтения отчета компетенций: {str(e)}"
 
+        # Загружаем курсы из файла триггеров
+        triggers_file_path = 'triggers.xlsx'
+        if not os.path.exists(triggers_file_path):
+            return "❌ Ошибка: Файл triggers.xlsx не найден."
+        
+        courses_dict = self._load_triggers_courses(triggers_file_path)
+        
+        # Извлекаем компетенции с проблемами из отчета
+        problem_competencies = self._extract_competencies_from_report(competency_report)
+        
+        # Формируем строку с актуальными курсами
+        courses_text = ""
+        if courses_dict and problem_competencies:
+            courses_text = "\n\n📚 ДОСТУПНЫЕ КУРСЫ ДЛЯ РЕКОМЕНДАЦИЙ:\n"
+            for comp in problem_competencies:
+                # Ищем курсы для этой компетенции
+                for key, courses in courses_dict.items():
+                    if comp.lower() in key.lower():
+                        courses_text += f"- {comp}:\n"
+                        for course in courses:
+                            courses_text += f"  • {course}\n"
+                        break
+
         prompt = f"""Проанализируй текст встречи и отчет по компетенциям, затем сформируй детальные рекомендации:
 
 # ДЕТАЛЬНЫЕ РЕКОМЕНДАЦИИ ПО РАЗВИТИЮ
@@ -167,11 +232,14 @@ class MeetingAnalyzer:
 
 ### Приоритетные компетенции для развития:
 
+{courses_text}
+
+КРИТИЧЕСКИ ВАЖНО: Используй ТОЛЬКО курсы из списка выше для рекомендаций. НЕ придумывай новые курсы. Если для компетенции нет курсов в списке, не указывай курсы вообще.
+
 1. **[Название компетенции]** - [Балл/10]
    - 📊 **Текущий уровень:** [Описание текущего состояния]
    - 📚 **Курсы для изучения:**
-     - [Название курса 1] - [обоснование выбора]
-     - [Название курса 2] - [обоснование выбора]
+     - [Используй ТОЛЬКО курсы из списка выше, если они есть]
    - 💡 **Практические рекомендации:**
      - [Конкретная рекомендация 1]
      - [Конкретная рекомендация 2]
@@ -180,8 +248,7 @@ class MeetingAnalyzer:
 2. **[Название компетенции]** - [Балл/10]
    - 📊 **Текущий уровень:** [Описание текущего состояния]
    - 📚 **Курсы для изучения:**
-     - [Название курса 1] - [обоснование выбора]
-     - [Название курса 2] - [обоснование выбора]
+     - [Используй ТОЛЬКО курсы из списка выше, если они есть]
    - 💡 **Практические рекомендации:**
      - [Конкретная рекомендация 1]
      - [Конкретная рекомендация 2]

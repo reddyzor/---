@@ -583,12 +583,27 @@ async def analyze_text_optimized(text: str, triggers: dict, giga_chat: 'AsyncGig
                         # 🔧 ИСПРАВЛЕНО: присваиваем ПОЛНЫЙ балл из Excel для негативных маркеров
                         weighted_score = score  # Берем полный балл из файла триггеров
                         method = "sequence_matcher" if similarity <= 0.3 else "giga_enhanced"
+                        prompt = (
+                            f"Преобразуй негативную фразу в конструктивную, позитивную, сохраняя суть. "
+                            f"Ответь ТОЛЬКО позитивной фразой без лишних слов, разметки или объяснений.\n"
+                            f"Негатив: \"{sent}\"\n"
+                            f"Позитив:"
+                        )
+                        try:
+                            advice = await giga_chat.send(prompt)
+                            advice = advice.strip()
+                            # Post-processing: если совет неинформативный, подставить дефолт
+                            if not advice or advice.lower().startswith("позитив:") or len(advice) < 5:
+                                advice = "Сформулируйте мысль конструктивно, с акцентом на развитие и готовность к изменениям."
+                        except Exception:
+                            advice = "Сформулируйте мысль конструктивно, с акцентом на развитие и готовность к изменениям."
                         match_info = {
                             "found": sent,
                             "original": marker,
                             "score": weighted_score,
                             "similarity": similarity,
-                            "method": method
+                            "method": method,
+                            "advice": advice
                         }
                         neg_matches.append(match_info)
                         marker_stats['matches'].append(match_info)
@@ -699,7 +714,10 @@ def format_simple_report(analysis: dict) -> str:
                 for example in ind_data['negative']['examples']:
                     report += f"      • \"{example['found'][:200]}...\"\n"
                     report += f"        Похоже на: \"{example['original'][:100]}...\"\n"
-                    report += f"        Балл: -{example['score']:.1f}\n\n"
+                    report += f"        Балл: -{example['score']:.1f}\n"
+                    if 'advice' in example:
+                        report += f"        Совет: {example['advice']}\n"
+                    report += "\n"
             
             # Рекомендации по курсам
             if ind_data['courses']:
@@ -770,14 +788,18 @@ class AsyncGigaChat:
         if not self.token:
             await self._fetch_token()
 
-        self.history.append({'role': 'user', 'content': prompt})
         headers = {
             'Authorization': f'Bearer {self.token}',
             'Content-Type': 'application/json'
         }
         payload = {
             'model': 'GigaChat',
-            'messages': self.history,
+            'messages': [
+                {
+                    'role': 'user',
+                    'content': prompt
+                }
+            ],
             'temperature': 0.7,
             'max_tokens': 500
         }
