@@ -15,9 +15,13 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from giga_recomendation import MeetingAnalyzer
 from competency_analyzer import analyze_competencies_async
+from docx import Document
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 # Конфигурация бота
 BOT_TOKEN = "8079592721:AAGLaX7LwUPX0X5fr1SK-9IQnSvfP3Z96ws"
@@ -41,6 +45,57 @@ meeting_analyzer = MeetingAnalyzer(AUTH_KEY, SCOPE, API_AUTH_URL, API_CHAT_URL)
 
 # Словарь для хранения файлов пользователей
 user_files = {}
+
+def filter_facilitator_speech(text):
+    """Фильтрует речь ведущего, определяя его по количеству предложений"""
+    lines = text.split('\n')
+    speaker_counts = {}
+    
+    # Подсчитываем количество предложений для каждого участника
+    for line in lines:
+        if ':' in line:
+            speaker = line.split(':')[0].strip()
+            if speaker and len(speaker) < 50:  # Исключаем слишком длинные имена
+                speaker_counts[speaker] = speaker_counts.get(speaker, 0) + 1
+    
+    # Находим ведущего (того, кто говорит больше всего)
+    if speaker_counts:
+        facilitator = max(speaker_counts, key=speaker_counts.get)
+        print(f"DEBUG: Определен ведущий: {facilitator} ({speaker_counts[facilitator]} предложений)")
+        
+        # Оставляем только речь ведущего
+        filtered_lines = []
+        for line in lines:
+            if line.startswith(f"{facilitator}:"):
+                filtered_lines.append(line)
+        
+        filtered_text = '\n'.join(filtered_lines)
+        print(f"DEBUG: Оригинальный размер: {len(text)} символов")
+        print(f"DEBUG: Размер после фильтрации: {len(filtered_text)} символов")
+        return filtered_text
+    
+    return text
+
+def read_docx_filtered(file_path):
+    """Чтение и фильтрация текста из файла .docx"""
+    try:
+        doc = Document(file_path)
+        full_text = []
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip():
+                full_text.append(paragraph.text)
+        
+        original_text = '\n'.join(full_text)
+        print(f"DEBUG: Оригинальный размер текста: {len(original_text)} символов")
+        
+        # Фильтруем речь ведущего
+        filtered_text = filter_facilitator_speech(original_text)
+        print(f"DEBUG: Размер после фильтрации: {len(filtered_text)} символов")
+        
+        return filtered_text
+    except Exception as e:
+        print(f"Ошибка чтения файла: {str(e)}")
+        return ""
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -251,6 +306,18 @@ async def handle_files_for_analysis(message: types.Message, state: FSMContext):
     with open(file_path, 'wb') as f:
         f.write(downloaded_file.read())
 
+    # Если это docx файл, сразу фильтруем речь ведущего
+    if file_name.lower().endswith('.docx'):
+        print(f"DEBUG: Фильтрую речь ведущего из файла {file_name}")
+        filtered_text = read_docx_filtered(file_path)
+        
+        # Сохраняем отфильтрованный текст обратно в файл
+        from docx import Document
+        doc = Document()
+        doc.add_paragraph(filtered_text)
+        doc.save(file_path)
+        print(f"DEBUG: Сохранен отфильтрованный текст в {file_path}")
+
     if user_id not in user_files:
         user_files[user_id] = {}
 
@@ -293,6 +360,10 @@ async def analyze_user_files(message: types.Message, user_id: int):
         # Сохраняем полный отчет
         report_filename = f"competency_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         with open(report_filename, 'w', encoding='utf-8') as f:
+            f.write(full_report)
+        
+        # Обновляем REPORT.txt актуальными данными
+        with open('REPORT.txt', 'w', encoding='utf-8') as f:
             f.write(full_report)
         
         # Отправляем файл с отчетом
