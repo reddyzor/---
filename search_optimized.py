@@ -24,15 +24,15 @@ API_CHAT_URL = 'https://gigachat.devices.sberbank.ru/api/v1/chat/completions'
 MAX_TOKENS = 20000  # Лимит токенов для GigaChat
 
 # КАРДИНАЛЬНО ИСПРАВЛЕННЫЕ настройки
-SEMANTIC_THRESHOLD = 0.15  # 🔧 ЕЩЕ СНИЖЕН порог с 20% до 15% для лучшего поиска позитивных совпадений
+SEMANTIC_THRESHOLD = 0.12  # 🔧 ЕЩЕ СНИЖЕН порог с 15% до 12% для лучшего поиска негативных совпадений
 MAX_SENTENCES = 500  # 🔧 УВЕЛИЧЕН лимит с 200 до 500 предложений
-MIN_SIMILARITY_FOR_AI = 0.10  # 🔧 ЕЩЕ СНИЖЕН порог для AI с 15% до 10%
+MIN_SIMILARITY_FOR_AI = 0.08  # 🔧 ЕЩЕ СНИЖЕН порог для AI с 10% до 8% для поиска негативных маркеров
 MAX_SIMILARITY_CAP = 0.85  # 🔧 ЕЩЕ УВЕЛИЧЕН лимит с 75% до 85%
 CACHE_SIZE_LIMIT = 1000
 
 # 🔧 МАКСИМАЛЬНО ОСЛАБЛЕННЫЕ ограничения для нахождения позитивных совпадений
 MAX_POSITIVE_MATCHES = 10  # УВЕЛИЧЕН с 5 до 10 позитивных совпадений на индикатор
-MAX_NEGATIVE_MATCHES = 5  # УВЕЛИЧЕН с 3 до 5 негативных совпадения на индикатор
+MAX_NEGATIVE_MATCHES = 8  # УВЕЛИЧЕН с 5 до 8 негативных совпадений на индикатор
 MIN_PERCENTAGE = -200  # СНИЖЕН с -100% до -200%
 MAX_PERCENTAGE = 300  # УВЕЛИЧЕН с 200% до 300%
 
@@ -130,26 +130,21 @@ def categorize_content(text: str) -> str:
     return 'general'
 
 def is_contextually_relevant(sentence: str, marker: str) -> bool:
-    """🔧 НОВАЯ ФУНКЦИЯ: Строгая проверка контекстуальной релевантности"""
+    """🔧 ОСЛАБЛЕННАЯ ФУНКЦИЯ: Более мягкая проверка контекстуальной релевантности для поиска негативных маркеров"""
     sent_category = categorize_content(sentence)
     marker_category = categorize_content(marker)
     
-    # Технические маркеры НЕ должны совпадать с организационными фразами
-    if marker_category == 'technical' and sent_category == 'organizational':
+    # 🔧 ОСЛАБЛЕННЫЕ ПРАВИЛА: разрешаем больше совпадений для поиска негативных маркеров
+    
+    # Блокируем только явно неподходящие короткие формальные фразы
+    if len(sentence) < 20 and sent_category == 'formal':
         return False
     
-    # Технические маркеры НЕ должны совпадать с формальным общением
-    if marker_category == 'technical' and sent_category == 'formal':
+    # Блокируем только очень короткие организационные фразы
+    if len(sentence) < 25 and sent_category == 'organizational':
         return False
     
-    # Межличностные маркеры НЕ должны совпадать с бизнес-обсуждением
-    if marker_category == 'interpersonal' and sent_category == 'business':
-        return False
-    
-    # Управленческие маркеры НЕ должны совпадать с представлениями
-    if marker_category == 'management' and sent_category == 'organizational':
-        return False
-    
+    # Все остальные совпадения разрешаем для поиска негативных маркеров
     return True
 
 def is_contextually_relevant_positive(sentence: str, marker: str) -> bool:
@@ -242,13 +237,13 @@ async def check_phrase_similarity_positive(giga_chat: 'AsyncGigaChat', sent: str
         return boosted_similarity, total_tokens
 
 async def check_phrase_similarity_optimized(giga_chat: 'AsyncGigaChat', sent: str, marker: str, total_tokens: int) -> Tuple[float, int]:
-    """🔧 ИСПРАВЛЕННАЯ проверка схожести с защитой от ложных совпадений"""
+    """🔧 ОСЛАБЛЕННАЯ проверка схожести для поиска негативных маркеров"""
     # Кэш
     cache_key = f"{hash(sent)}_{hash(marker)}"
     if cache_key in similarity_cache:
         return similarity_cache[cache_key], total_tokens
 
-    # 🔧 ПЕРВАЯ проверка - контекстуальная релевантность
+    # 🔧 ОСЛАБЛЕННАЯ проверка - контекстуальная релевантность
     if not is_contextually_relevant(sent, marker):
         similarity_cache[cache_key] = 0.0
         return 0.0, total_tokens
@@ -256,8 +251,8 @@ async def check_phrase_similarity_optimized(giga_chat: 'AsyncGigaChat', sent: st
     # Базовое сходство
     base_similarity = SequenceMatcher(None, sent.lower(), marker.lower()).ratio()
     
-    # 🔧 Если очень низкое - отбрасываем
-    if base_similarity < MIN_SIMILARITY_FOR_AI:
+    # 🔧 ОСЛАБЛЕННЫЙ порог для негативных маркеров
+    if base_similarity < 0.05:  # Снижен с MIN_SIMILARITY_FOR_AI до 0.05
         similarity_cache[cache_key] = 0.0
         return 0.0, total_tokens
     
@@ -269,18 +264,20 @@ async def check_phrase_similarity_optimized(giga_chat: 'AsyncGigaChat', sent: st
     
     # Проверяем токены
     if total_tokens >= MAX_TOKENS:
-        similarity_cache[cache_key] = base_similarity
-        return base_similarity, total_tokens
+        # Для негативных маркеров даем небольшой бонус к базовому сходству
+        boosted_similarity = min(base_similarity + 0.05, 0.8)
+        similarity_cache[cache_key] = boosted_similarity
+        return boosted_similarity, total_tokens
 
     try:
-        # 🔧 УЛУЧШЕННАЯ проверка через AI
+        # 🔧 ОСЛАБЛЕННАЯ проверка через AI для негативных маркеров
         ai_similarity = await check_semantic_similarity_strict(giga_chat, sent, marker)
         new_tokens = total_tokens + len(sent) + len(marker)
         
-        # 🔧 СТРОГАЯ валидация AI
+        # 🔧 ОСЛАБЛЕННАЯ валидация AI для негативных маркеров
         if ai_similarity > MAX_SIMILARITY_CAP:
             final_similarity = min(base_similarity, MAX_SIMILARITY_CAP)
-        elif ai_similarity < base_similarity * 0.6:
+        elif ai_similarity < base_similarity * 0.5:  # Снижен с 0.6 до 0.5
             final_similarity = base_similarity
         else:
             final_similarity = min(max(ai_similarity, base_similarity), MAX_SIMILARITY_CAP)
@@ -289,8 +286,10 @@ async def check_phrase_similarity_optimized(giga_chat: 'AsyncGigaChat', sent: st
         return final_similarity, new_tokens
         
     except Exception:
-        similarity_cache[cache_key] = base_similarity
-        return base_similarity, total_tokens
+        # Для негативных маркеров даем небольшой бонус к базовому сходству
+        boosted_similarity = min(base_similarity + 0.05, 0.8)
+        similarity_cache[cache_key] = boosted_similarity
+        return boosted_similarity, total_tokens
 
 async def check_semantic_similarity_positive(giga_chat: 'AsyncGigaChat', sentence: str, marker: str) -> float:
     """🔧 СПЕЦИАЛЬНАЯ функция для ПОЗИТИВНЫХ маркеров - максимально мягкая"""
@@ -320,19 +319,20 @@ async def check_semantic_similarity_positive(giga_chat: 'AsyncGigaChat', sentenc
         return min(max(base_sim + 0.1, 0.2), 0.8)
 
 async def check_semantic_similarity_strict(giga_chat: 'AsyncGigaChat', sentence: str, marker: str) -> float:
-    """🔧 ОСЛАБЛЕННАЯ функция: Гибкая контекстуальная проверка через AI для поиска позитивных совпадений"""
+    """🔧 ОСЛАБЛЕННАЯ функция: Гибкая контекстуальная проверка через AI для поиска негативных совпадений"""
     
-    prompt = f"""Оцени смысловое сходство по шкале 0-1 с ПОЗИТИВНЫМ УКЛОНОМ.
+    prompt = f"""Оцени смысловое сходство по шкале 0-1 с ОСЛАБЛЕННЫМИ КРИТЕРИЯМИ.
 
 ФРАЗА ИЗ ВСТРЕЧИ: "{sentence}"
-МАРКЕР КОМПЕТЕНЦИИ: "{marker}"
+НЕГАТИВНЫЙ МАРКЕР: "{marker}"
 
-ГИБКИЕ ПРАВИЛА:
-- Ищи ОБЩИЙ СМЫСЛ, а не точное совпадение слов
-- Если человек говорит о своих качествах, целях, развитии - это ПОЗИТИВНО
-- Если обсуждает работу, клиентов, процессы - может быть ПОЗИТИВНО
-- Будь МЕНЕЕ строгим, ищи смысловые связи
-- Оценивай от 0.15 до 0.85
+ОСЛАБЛЕННЫЕ ПРАВИЛА:
+- Ищи ЛЮБЫЕ смысловые связи, даже отдаленные
+- Если человек говорит о проблемах, сложностях, недостатках - это НЕГАТИВНО
+- Если обсуждает ошибки, неудачи, неэффективность - это НЕГАТИВНО
+- Если выражает сомнения, недовольство, критику - это НЕГАТИВНО
+- Будь МАКСИМАЛЬНО внимательным к негативным проявлениям
+- Оценивай от 0.12 до 0.85
 
 Ответь только число 0.XX"""
 

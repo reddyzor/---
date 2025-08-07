@@ -24,7 +24,7 @@ logging.basicConfig(
 )
 
 # Конфигурация бота
-BOT_TOKEN = "8079592721:AAGLaX7LwUPX0X5fr1SK-9IQnSvfP3Z96ws"
+BOT_TOKEN = "6668411969:AAGTIbWqEs4srvY4ZFM5DMjAdkVVBbFiyGY"
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
